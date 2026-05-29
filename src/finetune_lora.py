@@ -1,0 +1,132 @@
+"""LoRA instruction fine-tuning of Qwen2.5-1.5B (PEFT + Transformers).
+
+Takes the *base* Qwen2.5-1.5B model and teaches it to follow instructions by
+training small LoRA adapters on the Alpaca dataset. Only the adapters are
+trained (~0.5% of the parameters), so it fits comfortably on a single GPU and
+runs in ~30 minutes on a Colab A100/L4.
+
+Run from the repository root:
+    python src/finetune_lora.py --max-samples 3000 --epochs 1
+Add --load-4bit to use QLoRA (4-bit) on smaller GPUs (e.g. a free T4).
+"""
+
+import argparse
+
+import torch
+from datasets import load_dataset
+from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
+from transformers import (
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    DataCollatorForLanguageModeling,
+    Trainer,
+    TrainingArguments,
+)
+
+# Alpaca-style prompt template the model learns to complete.
+PROMPT_NO_INPUT = "### Instruction:\n{instruction}\n\n### Response:\n"
+PROMPT_INPUT = "### Instruction:\n{instruction}\n\n### Input:\n{input}\n\n### Response:\n"
+
+
+def format_example(ex: dict) -> str:
+    """Render one Alpaca row as prompt + response."""
+    if ex.get("input", "").strip():
+        prompt = PROMPT_INPUT.format(instruction=ex["instruction"], input=ex["input"])
+    else:
+        prompt = PROMPT_NO_INPUT.format(instruction=ex["instruction"])
+    return prompt + ex["output"]
+
+
+def pick_precision():
+    """Use bf16 where supported (A100/L4), otherwise fp16 (e.g. T4)."""
+    if torch.cuda.is_available() and torch.cuda.is_bf16_supported():
+        return torch.bfloat16, True, False
+    return torch.float16, False, True
+
+
+def main():
+    ap = argparse.ArgumentParser(description="LoRA instruction tuning of Qwen2.5-1.5B.")
+    ap.add_argument("--model", default="Qwen/Qwen2.5-1.5B")
+    ap.add_argument("--dataset", default="tatsu-lab/alpaca")
+    ap.add_argument("--max-samples", type=int, default=3000,
+                    help="Subset size for a fast run (0 = full dataset).")
+    ap.add_argument("--epochs", type=float, default=1.0)
+    ap.add_argument("--lr", type=float, default=2e-4)
+    ap.add_argument("--batch-size", type=int, default=8)
+    ap.add_argument("--grad-accum", type=int, default=2)
+    ap.add_argument("--max-len", type=int, default=512)
+    ap.add_argument("--lora-r", type=int, default=16)
+    ap.add_argument("--lora-alpha", type=int, default=32)
+    ap.add_argument("--output-dir", default="outputs/qwen2.5-1.5b-lora")
+    ap.add_argument("--load-4bit", action="store_true", help="Use QLoRA (4-bit).")
+    args = ap.parse_args()
+
+    dtype, use_bf16, use_fp16 = pick_precision()
+
+    tokenizer = AutoTokenizer.from_pretrained(args.model)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    model_kwargs = {"torch_dtype": dtype}
+    if args.load_4bit:
+        from transformers import BitsAndBytesConfig
+
+        model_kwargs["quantization_config"] = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_compute_dtype=dtype,
+            bnb_4bit_use_double_quant=True,
+        )
+    model = AutoModelForCausalLM.from_pretrained(args.model, **model_kwargs)
+    model.config.use_cache = False
+    if args.load_4bit:
+        model = prepare_model_for_kbit_training(model)
+
+    lora = LoraConfig(
+        r=args.lora_r,
+        lora_alpha=args.lora_alpha,
+        lora_dropout=0.05,
+        bias="none",
+        task_type="CAUSAL_LM",
+        target_modules=["q_proj", "k_proj", "v_proj", "o_proj",
+                        "gate_proj", "up_proj", "down_proj"],
+    )
+    model = get_peft_model(model, lora)
+    model.print_trainable_parameters()
+
+    ds = load_dataset(args.dataset, split="train")
+    if args.max_samples and args.max_samples < len(ds):
+        ds = ds.shuffle(seed=42).select(range(args.max_samples))
+
+    def tokenize(ex):
+        return tokenizer(format_example(ex) + tokenizer.eos_token,
+                         truncation=True, max_length=args.max_len)
+
+    ds = ds.map(tokenize, remove_columns=ds.column_names)
+    collator = DataCollatorForLanguageModeling(tokenizer, mlm=False)
+
+    targs = TrainingArguments(
+        output_dir=args.output_dir,
+        num_train_epochs=args.epochs,
+        per_device_train_batch_size=args.batch_size,
+        gradient_accumulation_steps=args.grad_accum,
+        learning_rate=args.lr,
+        lr_scheduler_type="cosine",
+        warmup_ratio=0.03,
+        logging_steps=20,
+        save_strategy="epoch",
+        bf16=use_bf16,
+        fp16=use_fp16,
+        report_to="none",
+        optim="paged_adamw_8bit" if args.load_4bit else "adamw_torch",
+    )
+    trainer = Trainer(model=model, args=targs, train_dataset=ds, data_collator=collator)
+    trainer.train()
+
+    model.save_pretrained(args.output_dir)
+    tokenizer.save_pretrained(args.output_dir)
+    print(f"\nLoRA adapter saved to: {args.output_dir}")
+
+
+if __name__ == "__main__":
+    main()
