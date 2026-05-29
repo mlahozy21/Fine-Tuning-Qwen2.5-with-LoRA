@@ -68,6 +68,17 @@ only a few MB.
 - Hu et al. (2021). *LoRA: Low-Rank Adaptation of Large Language Models*.
 - Qwen2.5 (Alibaba) · Alpaca dataset (Taori et al., 2023) · PEFT / Transformers (Hugging Face).
 
+## Troubleshooting
+
+On Google Colab, `peft` may raise an `ImportError` about an incompatible `torchao`
+version (Colab preinstalls an old one). `torchao` is **not used** here, so just remove it:
+
+```bash
+pip uninstall -y torchao
+```
+
+(The Colab notebook already does this in the install cell.)
+
 ## License
 
 Released under the MIT License — see `LICENSE`.

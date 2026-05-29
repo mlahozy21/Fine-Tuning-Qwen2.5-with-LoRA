@@ -6,3 +6,7 @@ datasets>=3.0
 accelerate>=1.0
 bitsandbytes>=0.44   # only needed for --load-4bit (QLoRA)
 sentencepiece>=0.1.99
+
+# Note: on Colab, uninstall the preinstalled torchao if present
+# (peft requires torchao>0.16 only for an unused code path):
+#   pip uninstall -y torchao
