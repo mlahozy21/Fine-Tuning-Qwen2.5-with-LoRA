@@ -44,12 +44,42 @@ python src/compare.py --adapter outputs/qwen2.5-1.5b-lora
 
 Key flags: `--model`, `--dataset`, `--max-samples`, `--epochs`, `--lora-r`, `--load-4bit`.
 
-## Expected result
+## Result
 
-After tuning, the model stops *continuing* the prompt and instead **answers in the
-instruction/response format** it was trained on (concise, on-task responses), whereas the
-base model tends to ramble or echo the prompt. The LoRA adapter saved under `outputs/` is
-only a few MB.
+Trained on a Colab **A100** with the fast settings above (3k Alpaca examples, 1 epoch,
+~95 s). LoRA touches **18.5 M parameters — 1.18 %** of the 1.56 B-parameter model; the
+saved adapter is only a few MB. Training loss fell from ~1.51 to ~1.37.
+
+### Sample output (real, greedy decoding)
+
+The clearest effect of instruction tuning is **format adherence**. Asked for a *haiku*,
+the base model ignores the format and explains the algorithm in prose, while the
+fine-tuned model attempts an actual short poem:
+
+> **Instruction:** *Write a haiku about gradient descent.*
+>
+> **Base:** "Gradient descent is a powerful optimization algorithm that is used to
+> minimize the cost function in machine learning models. It works by iteratively
+> adjusting the model's parameters in the direction of steepest descent... " *(prose,
+> ignores the haiku request)*
+>
+> **LoRA fine-tuned:**
+> "Gradient descent is a powerful tool, / It's a method to find the minimum of a
+> function, / It's a journey of discovery." *(three short lines — follows the form)*
+
+On factual questions the gap is smaller, because **Qwen2.5-1.5B is already partly
+instruction-capable out of the box**, so both give reasonable answers (e.g. both define
+overfitting correctly). This is expected for a strong modern base model and a short,
+single-epoch run — the point of the demo is the pipeline and the *visible shift toward
+the trained response format*, not a state-of-the-art assistant.
+
+One honest caveat: with greedy decoding the small fine-tuned model can fall into
+**repetition** on open-ended list prompts (visible on the third sample). Sampling
+(`do_sample=True`, `temperature≈0.7`) or a longer run mitigates this; the comparison uses
+greedy decoding for reproducibility.
+
+Reproduce it yourself with the one-click notebook `notebooks/compare_qwen2.5_lora.ipynb`
+(train + compare end-to-end on a Colab GPU).
 
 ## Repository layout
 
