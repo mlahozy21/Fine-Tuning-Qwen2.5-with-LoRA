@@ -89,7 +89,8 @@ Reproduce it yourself with the one-click notebook `notebooks/compare_qwen2.5_lor
 │   ├── finetune_lora.py   # LoRA/QLoRA instruction fine-tuning (PEFT + Transformers)
 │   └── compare.py         # base vs. fine-tuned generation comparison
 ├── notebooks/
-│   └── finetune_qwen2.5_lora.ipynb   # one-click Colab pipeline
+│   ├── finetune_qwen2.5_lora.ipynb   # one-click Colab pipeline (train)
+│   └── compare_qwen2.5_lora.ipynb    # train + base-vs-fine-tuned comparison
 ├── requirements.txt  LICENSE  .gitignore
 ```
 
