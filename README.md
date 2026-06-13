@@ -1,5 +1,9 @@
 # Fine-Tuning Qwen2.5-1.5B with LoRA
 
+> Companion repo: [Interpreting-LoRA-Fine-Tuning](https://github.com/mlahozy21/Interpreting-LoRA-Fine-Tuning)
+> uses this same training setup and analyses *what* the LoRA update actually changes
+> inside the model (update norms, effective rank, representation drift).
+
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/mlahozy21/Fine-Tuning-Qwen2.5-with-LoRA/blob/main/notebooks/finetune_qwen2.5_lora.ipynb)
 
 **Instruction-tuning a large language model with LoRA.** Starting from the *base*
@@ -19,9 +23,18 @@ consumer GPU, and produces an adapter of a few MB instead of a multi-GB checkpoi
 
 1. Loads the base `Qwen2.5-1.5B` and attaches LoRA adapters to the attention/MLP
    projections (`q/k/v/o_proj`, `gate/up/down_proj`).
-2. Trains on Alpaca with an instruction prompt template (causal-LM objective).
+2. Trains on Alpaca with an instruction prompt template. By default the
+   cross-entropy loss is computed **on the response tokens only** — the prompt /
+   instruction tokens are masked with `-100` (response-only masking). Pass
+   `--no-mask-prompt` to fall back to the legacy full-sequence causal-LM
+   objective. A global `--seed` (default 42) seeds Python/NumPy/torch for
+   reproducibility.
 3. Compares the **base** vs. the **fine-tuned** model on held-out instructions, so the
    effect of instruction tuning is visible side by side.
+
+> **Note on the loss numbers below:** the reported train-loss figures predate the
+> switch to response-only masking and the global seed, so they should be
+> regenerated on GPU (`python src/finetune_lora.py`) before being quoted.
 
 ## Quick start (Colab, one click)
 
@@ -92,24 +105,4 @@ Reproduce it yourself with the one-click notebook `notebooks/compare_qwen2.5_lor
 │   ├── finetune_qwen2.5_lora.ipynb   # one-click Colab pipeline (train)
 │   └── compare_qwen2.5_lora.ipynb    # train + base-vs-fine-tuned comparison
 ├── requirements.txt  LICENSE  .gitignore
-```
-
-## References
-
-- Hu et al. (2021). *LoRA: Low-Rank Adaptation of Large Language Models*.
-- Qwen2.5 (Alibaba) · Alpaca dataset (Taori et al., 2023) · PEFT / Transformers (Hugging Face).
-
-## Troubleshooting
-
-On Google Colab, `peft` may raise an `ImportError` about an incompatible `torchao`
-version (Colab preinstalls an old one). `torchao` is **not used** here, so just remove it:
-
-```bash
-pip uninstall -y torchao
-```
-
-(The Colab notebook already does this in the install cell.)
-
-## License
-
-Released under the MIT License — see `LICENSE`.
+`

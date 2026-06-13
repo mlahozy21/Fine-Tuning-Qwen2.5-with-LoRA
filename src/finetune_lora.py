@@ -11,7 +11,10 @@ Add --load-4bit to use QLoRA (4-bit) on smaller GPUs (e.g. a free T4).
 """
 
 import argparse
+import os
+import random
 
+import numpy as np
 import torch
 from datasets import load_dataset
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
@@ -19,22 +22,28 @@ from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
     DataCollatorForLanguageModeling,
+    DataCollatorForSeq2Seq,
     Trainer,
     TrainingArguments,
 )
 
-# Alpaca-style prompt template the model learns to complete.
-PROMPT_NO_INPUT = "### Instruction:\n{instruction}\n\n### Response:\n"
-PROMPT_INPUT = "### Instruction:\n{instruction}\n\n### Input:\n{input}\n\n### Response:\n"
+# Pure-python prompt formatting + response-only masking (offline-testable).
+from prompt_utils import (  # noqa: E402
+    IGNORE_INDEX,
+    build_labels,
+    format_example,
+    format_prompt,
+)
 
 
-def format_example(ex: dict) -> str:
-    """Render one Alpaca row as prompt + response."""
-    if ex.get("input", "").strip():
-        prompt = PROMPT_INPUT.format(instruction=ex["instruction"], input=ex["input"])
-    else:
-        prompt = PROMPT_NO_INPUT.format(instruction=ex["instruction"])
-    return prompt + ex["output"]
+def set_seed(seed: int = 42) -> None:
+    """Seed every RNG used in training for reproducibility."""
+    os.environ["PYTHONHASHSEED"] = str(seed)
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
 
 def pick_precision():
@@ -59,7 +68,15 @@ def main():
     ap.add_argument("--lora-alpha", type=int, default=32)
     ap.add_argument("--output-dir", default="outputs/qwen2.5-1.5b-lora")
     ap.add_argument("--load-4bit", action="store_true", help="Use QLoRA (4-bit).")
+    ap.add_argument("--seed", type=int, default=42, help="Global RNG seed.")
+    ap.add_argument("--mask-prompt", dest="mask_prompt", action="store_true",
+                    default=True,
+                    help="Compute the loss on the response only (default).")
+    ap.add_argument("--no-mask-prompt", dest="mask_prompt", action="store_false",
+                    help="Compute the loss over prompt+response (legacy behaviour).")
     args = ap.parse_args()
+
+    set_seed(args.seed)
 
     dtype, use_bf16, use_fp16 = pick_precision()
 
@@ -96,37 +113,17 @@ def main():
 
     ds = load_dataset(args.dataset, split="train")
     if args.max_samples and args.max_samples < len(ds):
-        ds = ds.shuffle(seed=42).select(range(args.max_samples))
+        ds = ds.shuffle(seed=args.seed).select(range(args.max_samples))
+
+    eos = tokenizer.eos_token or ""
 
     def tokenize(ex):
-        return tokenizer(format_example(ex) + tokenizer.eos_token,
-                         truncation=True, max_length=args.max_len)
-
-    ds = ds.map(tokenize, remove_columns=ds.column_names)
-    collator = DataCollatorForLanguageModeling(tokenizer, mlm=False)
-
-    targs = TrainingArguments(
-        output_dir=args.output_dir,
-        num_train_epochs=args.epochs,
-        per_device_train_batch_size=args.batch_size,
-        gradient_accumulation_steps=args.grad_accum,
-        learning_rate=args.lr,
-        lr_scheduler_type="cosine",
-        warmup_ratio=0.03,
-        logging_steps=20,
-        save_strategy="epoch",
-        bf16=use_bf16,
-        fp16=use_fp16,
-        report_to="none",
-        optim="paged_adamw_8bit" if args.load_4bit else "adamw_torch",
-    )
-    trainer = Trainer(model=model, args=targs, train_dataset=ds, data_collator=collator)
-    trainer.train()
-
-    model.save_pretrained(args.output_dir)
-    tokenizer.save_pretrained(args.output_dir)
-    print(f"\nLoRA adapter saved to: {args.output_dir}")
-
-
-if __name__ == "__main__":
-    main()
+        # Tokenize the prompt alone to find the response boundary, then the full
+        # sequence. The number of prompt tokens is exactly how many leading
+        # labels we mask out (response-only loss).
+        prompt_ids = tokenizer(format_prompt(ex), truncation=True,
+                               max_length=args.max_len, add_special_tokens=False)["input_ids"]
+        full = tokenizer(format_example(ex) + eos, truncation=True,
+                         max_length=args.max_len, add_special_tokens=False)
+        input_ids = full["input_ids"]
+      
