@@ -32,10 +32,6 @@ consumer GPU, and produces an adapter of a few MB instead of a multi-GB checkpoi
 3. Compares the **base** vs. the **fine-tuned** model on held-out instructions, so the
    effect of instruction tuning is visible side by side.
 
-> **Note on the loss numbers below:** the reported train-loss figures predate the
-> switch to response-only masking and the global seed, so they should be
-> regenerated on GPU (`python src/finetune_lora.py`) before being quoted.
-
 ## Quick start (Colab, one click)
 
 Click the badge above (or open `notebooks/finetune_qwen2.5_lora.ipynb`), set
@@ -86,10 +82,9 @@ overfitting correctly). This is expected for a strong modern base model and a sh
 single-epoch run — the point of the demo is the pipeline and the *visible shift toward
 the trained response format*, not a state-of-the-art assistant.
 
-One honest caveat: with greedy decoding the small fine-tuned model can fall into
-**repetition** on open-ended list prompts (visible on the third sample). Sampling
-(`do_sample=True`, `temperature≈0.7`) or a longer run mitigates this; the comparison uses
-greedy decoding for reproducibility.
+The comparison uses greedy decoding for reproducibility; with greedy decoding the small
+fine-tuned model can fall into **repetition** on open-ended list prompts, which sampling
+(`do_sample=True`, `temperature≈0.7`) or a longer run mitigates.
 
 Reproduce it yourself with the one-click notebook `notebooks/compare_qwen2.5_lora.ipynb`
 (train + compare end-to-end on a Colab GPU).
@@ -105,4 +100,13 @@ Reproduce it yourself with the one-click notebook `notebooks/compare_qwen2.5_lor
 │   ├── finetune_qwen2.5_lora.ipynb   # one-click Colab pipeline (train)
 │   └── compare_qwen2.5_lora.ipynb    # train + base-vs-fine-tuned comparison
 ├── requirements.txt  LICENSE  .gitignore
-`
+```
+
+## References
+
+- Hu et al. (2021). *LoRA: Low-Rank Adaptation of Large Language Models*.
+- Qwen2.5 (Alibaba) · Alpaca dataset (Taori et al., 2023) · PEFT / Transformers (Hugging Face).
+
+## Troubleshooting
+
+On Google Colab, `peft` may raise an `ImportError` about an incomp
