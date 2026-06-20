@@ -109,4 +109,15 @@ Reproduce it yourself with the one-click notebook `notebooks/compare_qwen2.5_lor
 
 ## Troubleshooting
 
-On Google Colab, `peft` may raise an `ImportError` about an incomp
+On Google Colab, `peft` may raise an `ImportError` about an incompatible `torchao`
+version (Colab preinstalls an old one). `torchao` is **not used** here, so just remove it:
+
+```bash
+pip uninstall -y torchao
+```
+
+(The Colab notebook already does this in the install cell.)
+
+## License
+
+Released under the MIT License — see `LICENSE`.

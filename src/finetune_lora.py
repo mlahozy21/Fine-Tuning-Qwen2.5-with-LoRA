@@ -126,4 +126,42 @@ def main():
         full = tokenizer(format_example(ex) + eos, truncation=True,
                          max_length=args.max_len, add_special_tokens=False)
         input_ids = full["input_ids"]
-      
+        full["labels"] = build_labels(input_ids, len(prompt_ids),
+                                      mask_prompt=args.mask_prompt)
+        return full
+
+    ds = ds.map(tokenize, remove_columns=ds.column_names)
+    if args.mask_prompt:
+        # Seq2Seq collator pads `input_ids` with pad_token and `labels` with -100,
+        # preserving the per-token response-only mask we built above.
+        collator = DataCollatorForSeq2Seq(tokenizer, label_pad_token_id=IGNORE_INDEX,
+                                          padding=True)
+    else:
+        # Legacy behaviour: labels == input_ids, loss over the whole sequence.
+        collator = DataCollatorForLanguageModeling(tokenizer, mlm=False)
+
+    targs = TrainingArguments(
+        output_dir=args.output_dir,
+        num_train_epochs=args.epochs,
+        per_device_train_batch_size=args.batch_size,
+        gradient_accumulation_steps=args.grad_accum,
+        learning_rate=args.lr,
+        lr_scheduler_type="cosine",
+        warmup_ratio=0.03,
+        logging_steps=20,
+        save_strategy="epoch",
+        bf16=use_bf16,
+        fp16=use_fp16,
+        report_to="none",
+        optim="paged_adamw_8bit" if args.load_4bit else "adamw_torch",
+    )
+    trainer = Trainer(model=model, args=targs, train_dataset=ds, data_collator=collator)
+    trainer.train()
+
+    model.save_pretrained(args.output_dir)
+    tokenizer.save_pretrained(args.output_dir)
+    print(f"\nLoRA adapter saved to: {args.output_dir}")
+
+
+if __name__ == "__main__":
+    main()
